@@ -30,10 +30,17 @@ pipeline {
             }
         }
         
+        stage('Archive') {
+            steps {
+                echo 'Archiving JAR file...'
+                archiveArtifacts artifacts: 'build/libs/*.jar', allowEmptyArchive: false
+            }
+        }
+        
         stage('Deploy Info') {
             steps {
                 echo 'Application built successfully!'
-                echo 'Ready for containerization and k3s deployment.'
+                echo 'JAR file archived and ready for k3s deployment.'
             }
         }
     }
