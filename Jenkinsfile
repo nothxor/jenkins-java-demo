@@ -1,6 +1,12 @@
 pipeline {
     agent any
     
+    environment {
+        REGISTRY = 'ghcr.io'
+        IMAGE_NAME = 'nothxor/jenkins-java-demo'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+    }
+    
     stages {
         stage('Checkout') {
             steps {
@@ -30,10 +36,31 @@ pipeline {
             }
         }
         
+        stage('Docker Build') {
+            steps {
+                echo 'Building Docker image...'
+                script {
+                    docker.build("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}")
+                }
+            }
+        }
+        
+        stage('Docker Push') {
+            steps {
+                echo 'Pushing Docker image to GitHub Container Registry...'
+                script {
+                    docker.withRegistry("https://${REGISTRY}", 'github-token') {
+                        docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push()
+                        docker.image("${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}").push('latest')
+                    }
+                }
+            }
+        }
+        
         stage('Deploy Info') {
             steps {
-                echo 'Application built successfully!'
-                echo 'Ready for containerization and k3s deployment.'
+                echo "Image pushed: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+                echo 'Ready for k3s deployment!'
             }
         }
     }
@@ -43,10 +70,10 @@ pipeline {
             echo 'Pipeline completed!'
         }
         success {
-            echo 'Build succeeded!'
+            echo 'Build and push succeeded!'
         }
         failure {
-            echo 'Build failed!'
+            echo 'Build or push failed!'
         }
     }
 }
