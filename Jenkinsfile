@@ -5,87 +5,58 @@ pipeline {
                 apiVersion: v1
                 kind: Pod
                 spec:
+                  serviceAccountName: default
                   containers:
-                  - name: gradle
+                  - name: build-deploy
                     image: gradle:8-jdk17
                     command:
                     - sleep
                     args:
                     - 99d
-                  - name: kubectl
-                    image: bitnami/kubectl:latest
-                    command:
-                    - sleep
-                    args:
-                    - 99d
+                    volumeMounts:
+                    - name: docker-sock
+                      mountPath: /var/run/docker.sock
+                  volumes:
+                  - name: docker-sock
+                    hostPath:
+                      path: /var/run/docker.sock
             '''
         }
     }
     
     stages {
-        stage('Checkout') {
+        stage('Setup') {
             steps {
-                checkout scm
-                echo "Checked out code from ${env.GIT_BRANCH}"
+                container('build-deploy') {
+                    sh '''
+                        apt-get update && apt-get install -y curl
+                        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                        chmod +x kubectl && mv kubectl /usr/local/bin/
+                    '''
+                }
             }
         }
         
         stage('Build') {
             steps {
-                container('gradle') {
-                    sh './gradlew clean build -x test'
-                    echo 'Build completed successfully'
+                container('build-deploy') {
+                    sh './gradlew clean build jar'
+                    archiveArtifacts artifacts: 'build/libs/*.jar'
                 }
             }
         }
         
-        stage('Test') {
+        stage('Deploy') {
+            when { branch 'main' }
             steps {
-                container('gradle') {
-                    sh './gradlew test'
-                    echo 'Tests completed'
-                }
-            }
-        }
-        
-        stage('Package') {
-            steps {
-                container('gradle') {
-                    sh './gradlew jar'
-                    echo 'JAR packaging completed'
-                }
-            }
-        }
-        
-        stage('Archive') {
-            steps {
-                archiveArtifacts artifacts: 'build/libs/*.jar', 
-                                fingerprint: true,
-                                allowEmptyArchive: false
-                echo 'Artifacts archived successfully'
-            }
-        }
-        
-        stage('Deploy to k3s') {
-            when {
-                branch 'main'
-            }
-            steps {
-                container('kubectl') {
+                container('build-deploy') {
                     sh '''
                         kubectl apply -f k3s-manifests/java-demo-deployment.yaml
                         kubectl rollout restart deployment/java-demo
                         kubectl rollout status deployment/java-demo --timeout=300s
-                        echo "Deployment completed!"
                     '''
                 }
             }
-        }
-    }
-    
-    post {
-        always {
-            cleanWs()
         }
     }
 }
