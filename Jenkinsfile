@@ -1,59 +1,91 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            yaml '''
+                apiVersion: v1
+                kind: Pod
+                spec:
+                  containers:
+                  - name: gradle
+                    image: gradle:8-jdk17
+                    command:
+                    - sleep
+                    args:
+                    - 99d
+                  - name: kubectl
+                    image: bitnami/kubectl:latest
+                    command:
+                    - sleep
+                    args:
+                    - 99d
+            '''
+        }
+    }
     
     stages {
         stage('Checkout') {
             steps {
-                echo 'Checking out code...'
                 checkout scm
+                echo "Checked out code from ${env.GIT_BRANCH}"
             }
         }
         
         stage('Build') {
             steps {
-                echo 'Building with Gradle...'
-                sh './gradlew build'
+                container('gradle') {
+                    sh './gradlew clean build -x test'
+                    echo 'Build completed successfully'
+                }
             }
         }
         
         stage('Test') {
             steps {
-                echo 'Running tests...'
-                sh './gradlew test'
+                container('gradle') {
+                    sh './gradlew test'
+                    echo 'Tests completed'
+                }
             }
         }
         
         stage('Package') {
             steps {
-                echo 'Creating JAR file...'
-                sh './gradlew jar'
+                container('gradle') {
+                    sh './gradlew jar'
+                    echo 'JAR packaging completed'
+                }
             }
         }
         
         stage('Archive') {
             steps {
-                echo 'Archiving JAR file...'
-                archiveArtifacts artifacts: 'build/libs/*.jar', allowEmptyArchive: false
+                archiveArtifacts artifacts: 'build/libs/*.jar', 
+                                fingerprint: true,
+                                allowEmptyArchive: false
+                echo 'Artifacts archived successfully'
             }
         }
         
-        stage('Deploy Info') {
+        stage('Deploy to k3s') {
+            when {
+                branch 'main'
+            }
             steps {
-                echo 'Application built successfully!'
-                echo 'JAR file archived and ready for k3s deployment.'
+                container('kubectl') {
+                    sh '''
+                        kubectl apply -f k3s-manifests/java-demo-deployment.yaml
+                        kubectl rollout restart deployment/java-demo
+                        kubectl rollout status deployment/java-demo --timeout=300s
+                        echo "Deployment completed!"
+                    '''
+                }
             }
         }
     }
     
     post {
         always {
-            echo 'Pipeline completed!'
-        }
-        success {
-            echo 'Build succeeded!'
-        }
-        failure {
-            echo 'Build failed!'
+            cleanWs()
         }
     }
 }
